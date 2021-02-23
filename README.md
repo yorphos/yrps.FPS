@@ -1,2 +1,2 @@
-# .yrpsFPS
+# yrps.FPS
 Roblox FPS framework
