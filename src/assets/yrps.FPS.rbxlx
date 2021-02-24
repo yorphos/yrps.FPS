@@ -2582,19 +2582,1356 @@ return TS
         </Item>
         <Item class="Folder" referent="11">
           <Properties>
+            <string name="Name">janitor</string>
+          </Properties>
+          <Item class="ModuleScript" referent="12">
+            <Properties>
+              <string name="Name">package</string>
+              <string name="Source">return {
+	_from = "@rbxts/janitor",
+	_id = "@rbxts/janitor@1.0.5",
+	_inBundle = false,
+	_integrity = "sha512-nDeebgBpRz+2hoKK/Gu8dPLWKiIgSbJAyH8u9tptUC8qJg1xR1tIaomS1srNmsC7eLaGANNWgB/dqnqhjFjrmA==",
+	_location = "/@rbxts/janitor",
+	_phantomChildren = {
+	},
+	_requested = {
+		escapedName = "@rbxts%2fjanitor",
+		fetchSpec = "latest",
+		name = "@rbxts/janitor",
+		raw = "@rbxts/janitor",
+		rawSpec = "",
+		registry = true,
+		saveSpec = nil,
+		scope = "@rbxts",
+		type = "tag",
+	},
+	_requiredBy = {"#USER", "/"},
+	_resolved = "https://registry.npmjs.org/@rbxts/janitor/-/janitor-1.0.5.tgz",
+	_shasum = "bd9a0d30b75be0e45028b3119b52082f6810d6c5",
+	_spec = "@rbxts/janitor",
+	_where = "C:\\Documents\\Programming\\Projects\\Roblox\\yrps.FPS",
+	author = {
+		name = "OverHash",
+	},
+	bugs = {
+		url = "https://github.com/OverHash/Roblox-TS-Libraries/issues",
+	},
+	bundleDependencies = false,
+	deprecated = false,
+	description = "A port of pobammer's janitor module.",
+	devDependencies = {
+		["@rbxts/compiler-types"] = "^1.0.0-beta.14.0",
+		["@rbxts/types"] = "^1.0.437",
+	},
+	files = {"index.d.ts", "src/"},
+	homepage = "https://github.com/OverHash/Roblox-TS-Libraries/blob/master/janitor/README.md",
+	keywords = {"janitor", "cleanup", "garbage collection", "validark", "maid", "roblox", "roblox-typescript", "roblox-ts"},
+	license = "Apache-2.0",
+	main = "src/init.lua",
+	name = "@rbxts/janitor",
+	publishConfig = {
+		access = "public",
+	},
+	repository = {
+		type = "git",
+		url = "https://github.com/OverHash/Roblox-TS-Libraries/tree/master/janitor",
+	},
+	scripts = {
+		test = "echo \"Error: no test specified\" &amp;&amp; exit 1",
+	},
+	types = "index.d.ts",
+	version = "1.0.5",
+}</string>
+            </Properties>
+          </Item>
+          <Item class="ModuleScript" referent="13">
+            <Properties>
+              <string name="Name">src</string>
+              <string name="Source">-- Janitor
+-- Original by Validark
+-- Modifications by pobammer
+-- roblox-ts support by OverHash and Validark
+
+local TS = _G[script]
+
+local Promise = TS.Promise
+local Scheduler = require(script.Scheduler)
+
+local Janitors = setmetatable({}, {__mode = "k"})
+local Janitor = {__index = {CurrentlyCleaning = true}}
+
+local LinkToInstanceIndex = newproxy(true)
+getmetatable(LinkToInstanceIndex).__tostring = function()
+	return "LinkToInstanceIndex"
+end
+
+local FastSpawn = Scheduler.FastSpawn
+local Wait = Scheduler.Wait
+
+local TypeDefaults = {
+	["function"] = true;
+	RBXScriptConnection = "Disconnect";
+}
+
+--[[**
+	Instantiates a new Janitor object.
+	@returns [Janitor]
+**--]]
+function Janitor.new()
+	return setmetatable({CurrentlyCleaning = false}, Janitor)
+end
+
+--[[**
+	Determines if the passed object is a Janitor.
+	@param [any] Object The object you are checking.
+	@returns [boolean] Whether or not the object is a Janitor.
+**--]]
+function Janitor.Is(Object)
+	return type(Object) == "table" and getmetatable(Object) == Janitor
+end
+
+--[[**
+	Adds an `Object` to Janitor for later cleanup, where `MethodName` is the key of the method within `Object` which should be called at cleanup time. If the `MethodName` is `true` the `Object` itself will be called instead. If passed an index it will occupy a namespace which can be `Remove()`d or overwritten. Returns the `Object`.
+	@param [any] Object The object you want to clean up.
+	@param [string | true?] MethodName The name of the method that will be used to clean up. If not passed, it will first check if the object's type exists in TypeDefaults, and if that doesn't exist, it assumes `Destroy`.
+	@param [any?] Index The index that can be used to clean up the object manually.
+	@returns [any] The object that was passed.
+**--]]
+function Janitor.__index:Add(Object, MethodName, Index)
+	if Index then
+		self:Remove(Index)
+
+		local This = Janitors[self]
+
+		if not This then
+			This = {}
+			Janitors[self] = This
+		end
+
+		This[Index] = Object
+	end
+
+	self[Object] = MethodName or TypeDefaults[typeof(Object)] or "Destroy"
+	return Object
+end
+
+-- My version of Promise has PascalCase, but I converted it to use lowerCamelCase for this release since obviously that's important to do.
+
+--[[**
+	Adds a promise to the janitor. If the janitor is cleaned up and the promise is not completed, the promise will be cancelled.
+	@param [Promise] PromiseObject The promise you want to add to the janitor.
+	@returns [Promise]
+**--]]
+function Janitor.__index:AddPromise(PromiseObject)
+	if PromiseObject:getStatus() == Promise.Status.Started then
+		local Id = newproxy(false)
+		local NewPromise = self:Add(Promise.resolve(PromiseObject), "cancel", Id)
+		NewPromise:finallyCall(self.Remove, self, Id)
+		return NewPromise
+	else
+		return PromiseObject
+	end
+end
+
+--[[**
+	Cleans up whatever `Object` was set to this namespace by the 3rd parameter of `:Add()`.
+	@param [any] Index The index you want to remove.
+	@returns [Janitor] The same janitor, for chaining reasons.
+**--]]
+function Janitor.__index:Remove(Index)
+	local This = Janitors[self]
+
+	if This then
+		local Object = This[Index]
+
+		if Object then
+			local MethodName = self[Object]
+
+			if MethodName then
+				if MethodName == true then
+					Object()
+				else
+					Object[MethodName](Object)
+				end
+
+				self[Object] = nil
+			end
+
+			This[Index] = nil
+		end
+	end
+
+	return self
+end
+
+--[[**
+	Gets whatever object is stored with the given index, if it exists. This was added since Maid allows getting the task using `__index`.
+	@param [any] Index The index that the object is stored under.
+	@returns [any?] This will return the object if it is found, but it won't return anything if it doesn't exist.
+**--]]
+function Janitor.__index:Get(Index)
+	local This = Janitors[self]
+	if This then
+		return This[Index]
+	end
+end
+
+--[[**
+	Calls each Object's `MethodName` (or calls the Object if `MethodName == true`) and removes them from the Janitor. Also clears the namespace. This function is also called when you call a Janitor Object (so it can be used as a destructor callback).
+	@returns [void]
+**--]]
+function Janitor.__index:Cleanup()
+	if not self.CurrentlyCleaning then
+		self.CurrentlyCleaning = nil
+		for Object, MethodName in next, self do
+			if MethodName == true then
+				Object()
+			else
+				Object[MethodName](Object)
+			end
+
+			self[Object] = nil
+		end
+
+		local This = Janitors[self]
+		if This then
+			for Index in next, This do
+				This[Index] = nil
+			end
+
+			Janitors[self] = nil
+		end
+
+		self.CurrentlyCleaning = false
+	end
+end
+
+--[[**
+	Calls `:Cleanup()` and renders the Janitor unusable.
+	@returns [void]
+**--]]
+function Janitor.__index:Destroy()
+	self:Cleanup()
+	table.clear(self)
+	setmetatable(self, nil)
+end
+
+Janitor.__call = Janitor.__index.Cleanup
+
+--- Makes the Janitor clean up when the instance is destroyed
+-- @param Instance Instance The Instance the Janitor will wait for to be Destroyed
+-- @returns Disconnectable table to stop Janitor from being cleaned up upon Instance Destroy (automatically cleaned up by Janitor, btw)
+-- @author Corecii
+local Disconnect = {Connected = true}
+Disconnect.__index = Disconnect
+function Disconnect:Disconnect()
+	self.Connected = false
+	self.Connection:Disconnect()
+end
+
+--[[**
+	"Links" this Janitor to an Instance, such that the Janitor will `Cleanup` when the Instance is `Destroyed()` and garbage collected. A Janitor may only be linked to one instance at a time, unless `AllowMultiple` is true. When called with a truthy `AllowMultiple` parameter, the Janitor will "link" the Instance without overwriting any previous links, and will also not be overwritable. When called with a falsy `AllowMultiple` parameter, the Janitor will overwrite the previous link which was also called with a falsy `AllowMultiple` parameter, if applicable.
+	@param [Instance] Object The instance you want to link the Janitor to.
+	@param [boolean?] AllowMultiple Whether or not to allow multiple links on the same Janitor.
+	@returns [RbxScriptConnection] A pseudo RBXScriptConnection that can be disconnected.
+**--]]
+function Janitor.__index:LinkToInstance(Object, AllowMultiple)
+	local Reference = Instance.new("ObjectValue")
+	Reference.Value = Object
+
+	local ManualDisconnect = setmetatable({}, Disconnect)
+	local Connection
+	local function ChangedFunction(Obj, Par)
+		if not Reference.Value then
+			ManualDisconnect.Connected = false
+			return self:Cleanup()
+		elseif Obj == Reference.Value and not Par then
+			Obj = nil
+			Wait(0.03)
+
+			if (not Reference.Value or not Reference.Value.Parent) and ManualDisconnect.Connected then
+				if not Connection.Connected then
+					ManualDisconnect.Connected = false
+					return self:Cleanup()
+				else
+					while true do
+						Wait(0.2)
+						if not ManualDisconnect.Connected then
+							return
+						elseif not Connection.Connected then
+							ManualDisconnect.Connected = false
+							return self:Cleanup()
+						elseif Reference.Value.Parent then
+							return
+						end
+					end
+				end
+			end
+		end
+	end
+
+	Connection = Object.AncestryChanged:Connect(ChangedFunction)
+	ManualDisconnect.Connection = Connection
+	Object = nil
+	FastSpawn(ChangedFunction, Reference.Value, Reference.Value.Parent)
+
+	if AllowMultiple then
+		self:Add(ManualDisconnect, "Disconnect")
+	else
+		self:Add(ManualDisconnect, "Disconnect", LinkToInstanceIndex)
+	end
+
+	return ManualDisconnect
+end
+
+--[[**
+	Links several instances to a janitor, which is then returned.
+	@param [...Instance] ... All the instances you want linked.
+	@returns [Janitor] A janitor that can be used to manually disconnect all LinkToInstances.
+**--]]
+function Janitor.__index:LinkToInstances(...)
+	local ManualCleanup = Janitor.new()
+	for Index = 1, select("#", ...) do
+		ManualCleanup:Add(self:LinkToInstance(select(Index, ...), true), "Disconnect")
+	end
+
+	return ManualCleanup
+end
+
+return {
+	Janitor = Janitor,
+}</string>
+            </Properties>
+            <Item class="ModuleScript" referent="14">
+              <Properties>
+                <string name="Name">Scheduler</string>
+                <string name="Source">-- Scheduler
+-- Original by Validark
+-- Rewritten to fit the style of the repo by pobammer
+
+-- Original: https://github.com/Validark/Roblox-TS-Libraries/tree/master/delay-spawn-wait
+
+local RunService = game:GetService("RunService")
+local Heartbeat = RunService.Heartbeat
+local TimeFunction = RunService:IsRunning() and time or os.clock
+
+local Scheduler = {}
+
+local Queue = {}
+local CurrentLength = 0
+local Connection
+
+local function HeartbeatStep()
+	local ClockTick = TimeFunction()
+
+	repeat
+		local Current = Queue[1]
+		if Current == nil or Current.EndTime > ClockTick then
+			break
+		end
+
+		local Done = CurrentLength == 1
+
+		if Done then
+			Queue[1] = nil
+			CurrentLength = 0
+			Connection = Connection:Disconnect()
+		else
+			local LastNode = Queue[CurrentLength]
+			Queue[CurrentLength] = nil
+			CurrentLength -= 1
+			local TargetIndex = 1
+
+			while true do
+				local ChildIndex = 2 * TargetIndex
+				if ChildIndex > CurrentLength then
+					break
+				end
+
+				local MinChild = Queue[ChildIndex]
+				local RightChildIndex = ChildIndex + 1
+
+				if RightChildIndex &lt;= CurrentLength then
+					local RightChild = Queue[RightChildIndex]
+					if RightChild.EndTime &lt; MinChild.EndTime then
+						ChildIndex = RightChildIndex
+						MinChild = RightChild
+					end
+				end
+
+				if LastNode.EndTime &lt; MinChild.EndTime then
+					break
+				end
+
+				Queue[TargetIndex] = MinChild
+				TargetIndex = ChildIndex
+			end
+
+			Queue[TargetIndex] = LastNode
+		end
+
+		local Arguments = Current.Arguments
+		local Function = Current.Function
+
+		if typeof(Function) == "Instance" then
+			if Arguments then
+				Function:Fire(table.unpack(Arguments, 2, Arguments[1]))
+			else
+				Function:Fire(TimeFunction() - Current.StartTime)
+			end
+		else
+			local BindableEvent = Instance.new("BindableEvent")
+
+			if Arguments then
+				BindableEvent.Event:Connect(function()
+					Function(table.unpack(Arguments, 2, Arguments[1]))
+				end)
+			else
+				BindableEvent.Event:Connect(Function)
+			end
+
+			BindableEvent:Fire(TimeFunction() - Current.StartTime)
+			BindableEvent:Destroy()
+		end
+	until Done
+end
+
+--[[**
+	"Overengineered" `delay` reimplementation. Takes parameters. This should take significantly less time to execute than the original.
+	@param [number?] DelayTime The amount of time to delay for.
+	@param [function] Function The function to call.
+	@param [...?] ... Optional arguments to call the function with.
+	@returns [void]
+**--]]
+function Scheduler.Delay(Seconds, Function, ...)
+	-- If seconds is nil, -INF, INF, NaN, or less than MINIMUM_DELAY, assume seconds is MINIMUM_DELAY.
+	if Seconds == nil or Seconds &lt;= 0 or Seconds == math.huge then
+		Seconds = 0
+	end
+
+	local StartTime = TimeFunction()
+	local EndTime = StartTime + Seconds
+	local Length = select("#", ...)
+
+	if Connection == nil then -- first is nil when connection is nil
+		Connection = Heartbeat:Connect(HeartbeatStep)
+	end
+
+	local Node = {
+		Function = Function;
+		StartTime = StartTime;
+		EndTime = EndTime;
+		Arguments = Length > 0 and {Length + 1, ...};
+	}
+
+	local TargetIndex = CurrentLength + 1
+	CurrentLength = TargetIndex
+
+	while true do
+		local ParentIndex = (TargetIndex - TargetIndex % 2) / 2
+		if ParentIndex &lt; 1 then
+			break
+		end
+
+		local ParentNode = Queue[ParentIndex]
+		if ParentNode.EndTime &lt; Node.EndTime then
+			break
+		end
+
+		Queue[TargetIndex] = ParentNode
+		TargetIndex = ParentIndex
+	end
+
+	Queue[TargetIndex] = Node
+end
+
+local Scheduler_Delay = Scheduler.Delay
+
+--[[**
+	Overengineered `wait` reimplementation. Uses `Scheduler.Delay`.
+	@param [number?] Seconds The amount of time to yield for.
+	@returns [number] The actual time yielded.
+**--]]
+function Scheduler.Wait(Seconds)
+	local BindableEvent = Instance.new("BindableEvent")
+	Scheduler_Delay(math.max(Seconds or 0.03, 0.029), BindableEvent)
+	return BindableEvent.Event:Wait()
+end
+
+--[[**
+	Significantly simpler reimplementation of `wait`. This works the exact same, just a bit worse performing.
+	@param [number?] Seconds The amount of time to yield for.
+	@returns [number] The actual time yielded.
+**--]]
+function Scheduler.Wait2(Seconds)
+	Seconds = math.max(Seconds or 0.03, 0.029)
+	local TimeRemaining = Seconds
+
+	while TimeRemaining > 0 do
+		TimeRemaining -= Heartbeat:Wait()
+	end
+
+	return Seconds - TimeRemaining
+end
+
+-- @source https://devforum.roblox.com/t/psa-you-can-get-errors-and-stack-traces-from-coroutines/455510/2
+local function Finish(Thread, Success, ...)
+	if not Success then
+		warn(debug.traceback(Thread, tostring((...))))
+	end
+
+	return Success, ...
+end
+
+--[[**
+	Spawns the passed function immediately using coroutines. This keeps the traceback as well, and warns if the function errors.
+	@param [function] Function The function you are calling.
+	@param [...?] ... The optional arguments to call the function with.
+	@returns [(boolean, ...)] Whether or not the call was successful and the returned values.
+**--]]
+function Scheduler.Spawn(Function, ...)
+	local Thread = coroutine.create(Function)
+	return Finish(Thread, coroutine.resume(Thread, ...))
+end
+
+--[[**
+	Spawns the passed function immediately using a BindableEvent. This keeps the traceback as well, and will throw an error if the function errors.
+	@param [function] Function The function you are calling.
+	@param [...?] ... The optional arguments to call the function with.
+	@returns [void]
+**--]]
+function Scheduler.FastSpawn(Function, ...)
+	local Arguments = table.pack(...)
+	local BindableEvent = Instance.new("BindableEvent")
+	BindableEvent.Event:Connect(function()
+		Function(table.unpack(Arguments, 1, Arguments.n))
+	end)
+
+	BindableEvent:Fire()
+	BindableEvent:Destroy()
+end
+
+--[[**
+	Spawns the passed function with a delay using Heartbeat. This keeps the traceback as well, and will throw an error if the function errors.
+	@param [function] Function The function you are calling.
+	@param [...?] ... The optional arguments to call the function with.
+	@returns [void]
+**--]]
+function Scheduler.SpawnDelayed(Function, ...)
+	local Length = select("#", ...)
+	if Length > 0 then
+		local Arguments = {...}
+		local HeartbeatConnection
+
+		HeartbeatConnection = Heartbeat:Connect(function()
+			HeartbeatConnection:Disconnect()
+			Function(table.unpack(Arguments, 1, Length))
+		end)
+	else
+		local HeartbeatConnection
+		HeartbeatConnection = Heartbeat:Connect(function()
+			HeartbeatConnection:Disconnect()
+			Function()
+		end)
+	end
+end
+
+--[[**
+	A recreation of `spawn`, delay and all. This should in theory run better than the original spawn, as well as not using a garbage legacy scheduler. Use it Michal.
+	@param [function] Function The function you are calling.
+	@param [...?] ... The optional arguments to call the function with.
+	@returns [void]
+**--]]
+function Scheduler.NewSpawn(Function, ...)
+	local StartTime = TimeFunction()
+	local EndTime = StartTime + 0.03
+	local Length = select("#", ...)
+
+	if Connection == nil then -- first is nil when connection is nil
+		Connection = Heartbeat:Connect(HeartbeatStep)
+	end
+
+	local Node = {
+		Function = Function;
+		StartTime = StartTime;
+		EndTime = EndTime;
+		Arguments = Length > 0 and {Length + 1, ...};
+	}
+
+	local TargetIndex = CurrentLength + 1
+	CurrentLength = TargetIndex
+
+	while true do
+		local ParentIndex = (TargetIndex - TargetIndex % 2) / 2
+		if ParentIndex &lt; 1 then
+			break
+		end
+
+		local ParentNode = Queue[ParentIndex]
+		if ParentNode.EndTime &lt; Node.EndTime then
+			break
+		end
+
+		Queue[TargetIndex] = ParentNode
+		TargetIndex = ParentIndex
+	end
+
+	Queue[TargetIndex] = Node
+end
+
+return Scheduler</string>
+              </Properties>
+            </Item>
+          </Item>
+        </Item>
+        <Item class="ModuleScript" referent="15">
+          <Properties>
+            <string name="Name">services</string>
+            <string name="Source"><![CDATA[return setmetatable({}, {
+	__index = function(self, serviceName)
+		local service = game:GetService(serviceName)
+		self[serviceName] = service
+		return service
+	end,
+})
+]]></string>
+          </Properties>
+          <Item class="ModuleScript" referent="16">
+            <Properties>
+              <string name="Name">package</string>
+              <string name="Source">return {
+	_from = "@rbxts/services",
+	_id = "@rbxts/services@1.1.2",
+	_inBundle = false,
+	_integrity = "sha512-vxlo00Q/F1Yq3yGa5jisI1lkWuByJzLs2rfidA4e0wkLCBR0Od+BG55TBMzptCVUZjHUSefif4Mtl3d3a6IxyA==",
+	_location = "/@rbxts/services",
+	_phantomChildren = {
+	},
+	_requested = {
+		escapedName = "@rbxts%2fservices",
+		fetchSpec = "latest",
+		name = "@rbxts/services",
+		raw = "@rbxts/services",
+		rawSpec = "",
+		registry = true,
+		saveSpec = nil,
+		scope = "@rbxts",
+		type = "tag",
+	},
+	_requiredBy = {"#USER", "/"},
+	_resolved = "https://registry.npmjs.org/@rbxts/services/-/services-1.1.2.tgz",
+	_shasum = "56e165547e66ee28ecb557c50253384605e35153",
+	_spec = "@rbxts/services",
+	_where = "C:\\Documents\\Programming\\Projects\\Roblox\\yrps.FPS",
+	author = "",
+	bundleDependencies = false,
+	deprecated = false,
+	description = "A module that exports common Roblox services.",
+	devDependencies = {
+		["@rbxts/types"] = "^1.0.422",
+	},
+	files = {"init.lua", "index.d.ts"},
+	license = "ISC",
+	main = "init.lua",
+	name = "@rbxts/services",
+	scripts = {
+	},
+	typings = "index.d.ts",
+	version = "1.1.2",
+}</string>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="Folder" referent="17">
+          <Properties>
+            <string name="Name">t</string>
+          </Properties>
+          <Item class="Folder" referent="18">
+            <Properties>
+              <string name="Name">lib</string>
+            </Properties>
+            <Item class="ModuleScript" referent="19">
+              <Properties>
+                <string name="Name">ts</string>
+                <string name="Source"><![CDATA[-- t: a runtime typechecker for Roblox
+
+-- regular lua compatibility
+local typeof = typeof or type
+
+local function primitive(typeName)
+	return function(value)
+		local valueType = typeof(value)
+		if valueType == typeName then
+			return true
+		else
+			return false
+		end
+	end
+end
+
+local t = {}
+
+function t.any(value)
+	if value ~= nil then
+		return true
+	else
+		return false
+	end
+end
+
+--Lua primitives
+
+t.boolean = primitive("boolean")
+t.thread = primitive("thread")
+t.callback = primitive("function")
+t["function"] = t.callback
+t.none = primitive("nil")
+t["nil"] = t.none
+t.string = primitive("string")
+t.table = primitive("table")
+t.userdata = primitive("userdata")
+
+function t.number(value)
+	local valueType = typeof(value)
+	if valueType == "number" then
+		if value == value then
+			return true
+		else
+			return false
+		end
+	else
+		return false
+	end
+end
+
+function t.nan(value)
+	if value ~= value then
+		return true
+	else
+		return false
+	end
+end
+
+-- roblox types
+
+t.Axes = primitive("Axes")
+t.BrickColor = primitive("BrickColor")
+t.CFrame = primitive("CFrame")
+t.Color3 = primitive("Color3")
+t.ColorSequence = primitive("ColorSequence")
+t.ColorSequenceKeypoint = primitive("ColorSequenceKeypoint")
+t.DockWidgetPluginGuiInfo = primitive("DockWidgetPluginGuiInfo")
+t.Faces = primitive("Faces")
+t.Instance = primitive("Instance")
+t.NumberRange = primitive("NumberRange")
+t.NumberSequence = primitive("NumberSequence")
+t.NumberSequenceKeypoint = primitive("NumberSequenceKeypoint")
+t.PathWaypoint = primitive("PathWaypoint")
+t.PhysicalProperties = primitive("PhysicalProperties")
+t.Random = primitive("Random")
+t.Ray = primitive("Ray")
+t.Rect = primitive("Rect")
+t.Region3 = primitive("Region3")
+t.Region3int16 = primitive("Region3int16")
+t.TweenInfo = primitive("TweenInfo")
+t.UDim = primitive("UDim")
+t.UDim2 = primitive("UDim2")
+t.Vector2 = primitive("Vector2")
+t.Vector3 = primitive("Vector3")
+t.Vector3int16 = primitive("Vector3int16")
+t.Enum = primitive("Enum")
+t.EnumItem = primitive("EnumItem")
+t.RBXScriptSignal = primitive("RBXScriptSignal")
+t.RBXScriptConnection = primitive("RBXScriptConnection")
+
+function t.literal(...)
+	local size = select("#", ...)
+	if size == 1 then
+		local literal = ...
+		return function(value)
+			if value ~= literal then
+				return false
+			end
+
+			return true
+		end
+	else
+		local literals = {}
+		for i = 1, size do
+			local value = select(i, ...)
+			literals[i] = t.literal(value)
+		end
+
+		return t.union(table.unpack(literals, 1, size))
+	end
+end
+
+t.exactly = t.literal
+
+function t.keyOf(keyTable)
+	local keys = {}
+	local length = 0
+	for key in pairs(keyTable) do
+		length = length + 1
+		keys[length] = key
+	end
+
+	return t.literal(table.unpack(keys, 1, length))
+end
+
+function t.valueOf(valueTable)
+	local values = {}
+	local length = 0
+	for _, value in pairs(valueTable) do
+		length = length + 1
+		values[length] = value
+	end
+
+	return t.literal(table.unpack(values, 1, length))
+end
+
+function t.integer(value)
+	local success = t.number(value)
+	if not success then
+		return false
+	end
+
+	if value % 1 == 0 then
+		return true
+	else
+		return false
+	end
+end
+
+function t.numberMin(min)
+	return function(value)
+		local success = t.number(value)
+		if not success then
+			return false
+		end
+		if value >= min then
+			return true
+		else
+			return false
+		end
+	end
+end
+
+function t.numberMax(max)
+	return function(value)
+		local success = t.number(value)
+		if not success then
+			return false
+		end
+		if value <= max then
+			return true
+		else
+			return false
+		end
+	end
+end
+
+function t.numberMinExclusive(min)
+	return function(value)
+		local success = t.number(value)
+		if not success then
+			return false
+		end
+		if min < value then
+			return true
+		else
+			return false
+		end
+	end
+end
+
+function t.numberMaxExclusive(max)
+	return function(value)
+		local success = t.number(value)
+		if not success then
+			return false
+		end
+		if value < max then
+			return true
+		else
+			return false
+		end
+	end
+end
+
+t.numberPositive = t.numberMinExclusive(0)
+t.numberNegative = t.numberMaxExclusive(0)
+
+function t.numberConstrained(min, max)
+	assert(t.number(min) and t.number(max))
+	local minCheck = t.numberMin(min)
+	local maxCheck = t.numberMax(max)
+	return function(value)
+		local minSuccess = minCheck(value)
+		if not minSuccess then
+			return false
+		end
+
+		local maxSuccess = maxCheck(value)
+		if not maxSuccess then
+			return false
+		end
+
+		return true
+	end
+end
+
+function t.numberConstrainedExclusive(min, max)
+	assert(t.number(min) and t.number(max))
+	local minCheck = t.numberMinExclusive(min)
+	local maxCheck = t.numberMaxExclusive(max)
+	return function(value)
+		local minSuccess = minCheck(value)
+		if not minSuccess then
+			return false
+		end
+
+		local maxSuccess = maxCheck(value)
+		if not maxSuccess then
+			return false
+		end
+
+		return true
+	end
+end
+
+function t.match(pattern)
+	assert(t.string(pattern))
+	return function(value)
+		local stringSuccess = t.string(value)
+		if not stringSuccess then
+			return false
+		end
+
+		if string.match(value, pattern) == nil then
+			return false
+		end
+
+		return true
+	end
+end
+
+function t.optional(check)
+	assert(t.callback(check))
+	return function(value)
+		if value == nil then
+			return true
+		end
+		local success = check(value)
+		if success then
+			return true
+		else
+			return false
+		end
+	end
+end
+
+function t.tuple(...)
+	local checks = { ... }
+	return function(...)
+		local args = { ... }
+		for i, check in ipairs(checks) do
+			local success = check(args[i])
+			if success == false then
+				return false
+			end
+		end
+
+		return true
+	end
+end
+
+function t.keys(check)
+	assert(t.callback(check))
+	return function(value)
+		local tableSuccess = t.table(value)
+		if tableSuccess == false then
+			return false
+		end
+
+		for key in pairs(value) do
+			local success = check(key)
+			if success == false then
+				return false
+			end
+		end
+
+		return true
+	end
+end
+
+function t.values(check)
+	assert(t.callback(check))
+	return function(value)
+		local tableSuccess = t.table(value)
+		if tableSuccess == false then
+			return false
+		end
+
+		for _, val in pairs(value) do
+			local success = check(val)
+			if success == false then
+				return false
+			end
+		end
+
+		return true
+	end
+end
+
+function t.map(keyCheck, valueCheck)
+	assert(t.callback(keyCheck), t.callback(valueCheck))
+	local keyChecker = t.keys(keyCheck)
+	local valueChecker = t.values(valueCheck)
+	return function(value)
+		local keySuccess = keyChecker(value)
+		if not keySuccess then
+			return false
+		end
+
+		local valueSuccess = valueChecker(value)
+		if not valueSuccess then
+			return false
+		end
+
+		return true
+	end
+end
+
+function t.set(valueCheck)
+	return t.map(valueCheck, t.literal(true))
+end
+
+do
+	local arrayKeysCheck = t.keys(t.integer)
+
+	function t.array(check)
+		assert(t.callback(check))
+		local valuesCheck = t.values(check)
+		return function(value)
+			local keySuccess = arrayKeysCheck(value)
+			if keySuccess == false then
+				return false
+			end
+
+			-- # is unreliable for sparse arrays
+			-- Count upwards using ipairs to avoid false positives from the behavior of #
+			local arraySize = 0
+
+			for _ in ipairs(value) do
+				arraySize = arraySize + 1
+			end
+
+			for key in pairs(value) do
+				if key < 1 or key > arraySize then
+					return false
+				end
+			end
+
+			local valueSuccess = valuesCheck(value)
+			if not valueSuccess then
+				return false
+			end
+
+			return true
+		end
+	end
+
+	function t.strictArray(...)
+		local valueTypes = { ... }
+		assert(t.array(t.callback)(valueTypes))
+
+		return function(value)
+			local keySuccess = arrayKeysCheck(value)
+			if keySuccess == false then
+				return false
+			end
+
+			-- If there's more than the set array size, disallow
+			if #valueTypes < #value then
+				return false
+			end
+
+			for idx, typeFn in pairs(valueTypes) do
+				local typeSuccess = typeFn(value[idx])
+				if not typeSuccess then
+					return false
+				end
+			end
+
+			return true
+		end
+	end
+end
+
+do
+	local callbackArray = t.array(t.callback)
+
+	function t.union(...)
+		local checks = { ... }
+		assert(callbackArray(checks))
+
+		return function(value)
+			for _, check in ipairs(checks) do
+				if check(value) then
+					return true
+				end
+			end
+
+			return false
+		end
+	end
+
+	function t.intersection(...)
+		local checks = { ... }
+		assert(callbackArray(checks))
+
+		return function(value)
+			for _, check in ipairs(checks) do
+				local success = check(value)
+				if not success then
+					return false
+				end
+			end
+
+			return true
+		end
+	end
+end
+
+do
+	local checkInterface = t.map(t.any, t.callback)
+
+	function t.interface(checkTable)
+		assert(checkInterface(checkTable))
+		return function(value)
+			local tableSuccess = t.table(value)
+			if tableSuccess == false then
+				return false
+			end
+
+			for key, check in pairs(checkTable) do
+				local success = check(value[key])
+				if success == false then
+					return false
+				end
+			end
+			return true
+		end
+	end
+
+	function t.strictInterface(checkTable)
+		assert(checkInterface(checkTable))
+		return function(value)
+			local tableSuccess = t.table(value)
+			if tableSuccess == false then
+				return false
+			end
+
+			for key, check in pairs(checkTable) do
+				local success = check(value[key])
+				if success == false then
+					return false
+				end
+			end
+
+			for key in pairs(value) do
+				if not checkTable[key] then
+					return false
+				end
+			end
+
+			return true
+		end
+	end
+end
+
+function t.instanceOf(className)
+	assert(t.string(className))
+
+	return function(value)
+		local instanceSuccess = t.Instance(value)
+		if not instanceSuccess then
+			return false
+		end
+
+		if value.ClassName ~= className then
+			return false
+		end
+
+		return true
+	end
+end
+
+t.instance = t.instanceOf
+
+function t.instanceIsA(className)
+	assert(t.string(className))
+
+	return function(value)
+		local instanceSuccess = t.Instance(value)
+		if not instanceSuccess then
+			return false
+		end
+
+		if not value:IsA(className) then
+			return false
+		end
+
+		return true
+	end
+end
+
+function t.enum(enum)
+	assert(t.Enum(enum))
+	return function(value)
+		local enumItemSuccess = t.EnumItem(value)
+		if not enumItemSuccess then
+			return false
+		end
+
+		if value.EnumType == enum then
+			return true
+		else
+			return false
+		end
+	end
+end
+
+do
+	local checkWrap = t.tuple(t.callback, t.callback)
+
+	function t.wrap(callback, checkArgs)
+		assert(checkWrap(callback, checkArgs))
+		return function(...)
+			assert(checkArgs(...))
+			return callback(...)
+		end
+	end
+end
+
+function t.strict(check)
+	return function(...)
+		assert(check(...))
+	end
+end
+
+do
+	local checkChildren = t.map(t.string, t.callback)
+	function t.children(checkTable)
+		assert(checkChildren(checkTable))
+
+		return function(value)
+			local instanceSuccess = t.Instance(value)
+			if not instanceSuccess then
+				return false
+			end
+
+			local childrenByName = {}
+			for _, child in ipairs(value:GetChildren()) do
+				local name = child.Name
+				if checkTable[name] then
+					if childrenByName[name] then
+						return false
+					end
+
+					childrenByName[name] = child
+				end
+			end
+
+			for name, check in pairs(checkTable) do
+				local success = check(childrenByName[name])
+				if not success then
+					return false
+				end
+			end
+
+			return true
+		end
+	end
+end
+
+return { t = t }
+]]></string>
+              </Properties>
+            </Item>
+          </Item>
+          <Item class="ModuleScript" referent="20">
+            <Properties>
+              <string name="Name">package</string>
+              <string name="Source">return {
+	_from = "@rbxts/t",
+	_id = "@rbxts/t@2.1.1",
+	_inBundle = false,
+	_integrity = "sha512-d8VQouo4kEidg9uDX22fnpEDssq7QdMhwOrbMdFY/L5N4pgsu1S0M72HoDQzYj4JefvhQ2glcNWhHhbOquZY8w==",
+	_location = "/@rbxts/t",
+	_phantomChildren = {
+	},
+	_requested = {
+		escapedName = "@rbxts%2ft",
+		fetchSpec = "latest",
+		name = "@rbxts/t",
+		raw = "@rbxts/t",
+		rawSpec = "",
+		registry = true,
+		saveSpec = nil,
+		scope = "@rbxts",
+		type = "tag",
+	},
+	_requiredBy = {"#USER", "/"},
+	_resolved = "https://registry.npmjs.org/@rbxts/t/-/t-2.1.1.tgz",
+	_shasum = "a8283200a90714dbf8d93dc0b89d1d553056ca6d",
+	_spec = "@rbxts/t",
+	_where = "C:\\Documents\\Programming\\Projects\\Roblox\\yrps.FPS",
+	author = {
+		name = "osyris",
+	},
+	bugs = {
+		url = "https://github.com/osyrisrblx/t/issues",
+	},
+	bundleDependencies = false,
+	dependencies = {
+		["@rbxts/types"] = "^1.0.434",
+	},
+	deprecated = false,
+	description = "A Runtime Type Checker for Roblox",
+	files = {"lib/ts.lua", "lib/t.d.ts"},
+	homepage = "https://github.com/osyrisrblx/t#readme",
+	keywords = {},
+	license = "ISC",
+	main = "lib/ts.lua",
+	name = "@rbxts/t",
+	repository = {
+		type = "git",
+		url = "git+https://github.com/osyrisrblx/t.git",
+	},
+	types = "lib/t.d.ts",
+	version = "2.1.1",
+}</string>
+            </Properties>
+          </Item>
+        </Item>
+        <Item class="Folder" referent="21">
+          <Properties>
             <string name="Name">types</string>
           </Properties>
-          <Item class="Folder" referent="12">
+          <Item class="Folder" referent="22">
             <Properties>
               <string name="Name">include</string>
             </Properties>
-            <Item class="Folder" referent="13">
+            <Item class="Folder" referent="23">
               <Properties>
                 <string name="Name">generated</string>
               </Properties>
             </Item>
           </Item>
-          <Item class="ModuleScript" referent="14">
+          <Item class="ModuleScript" referent="24">
             <Properties>
               <string name="Name">package</string>
               <string name="Source">return {
@@ -2655,15 +3992,15 @@ return TS
       </Item>
     </Item>
   </Item>
-  <Item class="ServerScriptService" referent="15">
+  <Item class="ServerScriptService" referent="25">
     <Properties>
       <string name="Name">ServerScriptService</string>
     </Properties>
-    <Item class="Folder" referent="16">
+    <Item class="Folder" referent="26">
       <Properties>
         <string name="Name">TS</string>
       </Properties>
-      <Item class="Script" referent="17">
+      <Item class="Script" referent="27">
         <Properties>
           <string name="Name">main</string>
           <string name="Source"><![CDATA[-- Compiled with roblox-ts v1.0.0-beta.15
@@ -2673,27 +4010,39 @@ print(makeHello("main.server.ts"))
 ]]></string>
         </Properties>
       </Item>
+      <Item class="Script" referent="28">
+        <Properties>
+          <string name="Name">onJoin</string>
+          <string name="Source"><![CDATA[-- Compiled with roblox-ts v1.0.0-beta.15
+local TS = require(game:GetService("ReplicatedStorage"):WaitForChild("rbxts_include"):WaitForChild("RuntimeLib"))
+local Players = TS.import(script, TS.getModule(script, "services")).Players
+Players.PlayerAdded:Connect(function(player)
+	print(player.Name)
+end)
+]]></string>
+        </Properties>
+      </Item>
     </Item>
   </Item>
-  <Item class="SoundService" referent="18">
+  <Item class="SoundService" referent="29">
     <Properties>
       <string name="Name">SoundService</string>
       <bool name="RespectFilteringEnabled">true</bool>
     </Properties>
   </Item>
-  <Item class="StarterPlayer" referent="19">
+  <Item class="StarterPlayer" referent="30">
     <Properties>
       <string name="Name">StarterPlayer</string>
     </Properties>
-    <Item class="StarterPlayerScripts" referent="20">
+    <Item class="StarterPlayerScripts" referent="31">
       <Properties>
         <string name="Name">StarterPlayerScripts</string>
       </Properties>
-      <Item class="Folder" referent="21">
+      <Item class="Folder" referent="32">
         <Properties>
           <string name="Name">TS</string>
         </Properties>
-        <Item class="LocalScript" referent="22">
+        <Item class="LocalScript" referent="33">
           <Properties>
             <string name="Name">main</string>
             <string name="Source"><![CDATA[-- Compiled with roblox-ts v1.0.0-beta.15
@@ -2706,7 +4055,7 @@ print(makeHello("main.client.ts"))
       </Item>
     </Item>
   </Item>
-  <Item class="Workspace" referent="23">
+  <Item class="Workspace" referent="34">
     <Properties>
       <string name="Name">Workspace</string>
       <bool name="FilteringEnabled">true</bool>
