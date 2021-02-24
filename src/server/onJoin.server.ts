@@ -4,6 +4,8 @@ import DataStore2 from '@rbxts/datastore2';
 import { mainUI } from 'shared/ui-components/main-ui';
 import Remotes from 'shared/remotes';
 
+DataStore2.Combine('player_data', 'money');
+
 Players.PlayerAdded.Connect((player: Player) => {
     print('test')
     const moneyStore = DataStore2('money', player);
